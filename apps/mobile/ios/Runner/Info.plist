@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>HisaabAI uses the camera to capture invoice images.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>HisaabAI uses the photo library to select invoice images.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

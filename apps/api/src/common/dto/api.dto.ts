@@ -2,16 +2,15 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsIn,
-  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Matches,
-  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -21,7 +20,9 @@ export class CreateContactDto {
   @IsNotEmpty()
   name!: string;
 
-  @Matches(/^\+[1-9]\d{7,14}$/, { message: 'phone must be in E.164 format, e.g. +923001234567.' })
+  @Matches(/^\+[1-9]\d{7,14}$/, {
+    message: 'phone must be in E.164 format, e.g. +923001234567.',
+  })
   phone!: string;
 
   @IsOptional()
@@ -29,6 +30,7 @@ export class CreateContactDto {
   email?: string;
 
   @IsOptional()
+  @IsBoolean()
   whatsappOptIn?: boolean;
 }
 
@@ -67,6 +69,7 @@ export class CreateUploadDto {
 
 export class CreateExtractionDto {
   @IsString()
+  @IsNotEmpty()
   uploadId!: string;
 }
 
@@ -90,9 +93,11 @@ export class InvoiceItemDto {
 
 export class ApproveInvoiceDto {
   @IsString()
+  @IsNotEmpty()
   extractionId!: string;
 
   @IsString()
+  @IsNotEmpty()
   contactId!: string;
 
   @IsOptional()
