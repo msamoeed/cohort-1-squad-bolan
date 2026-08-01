@@ -11,6 +11,7 @@ export class AppController {
     return { status: 'ok' };
   }
 
+  
   @Get('auth/me')
   me(@CurrentUser() user: DecodedIdToken): { uid: string; email?: string } {
     return { uid: user.uid, email: user.email };

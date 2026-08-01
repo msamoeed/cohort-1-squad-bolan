@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@11.11.0",
   "scripts": {
-    "api:dev": "pnpm --dir apps/api start:dev",
+    "api:dev": "pnpm --dir apps/api start:dev --watch",
     "api:build": "pnpm --dir apps/api build",
     "api:lint": "pnpm --dir apps/api lint",
     "api:test": "pnpm --dir apps/api test",

@@ -141,3 +141,14 @@ export class CreateReminderDraftDto {
   @IsString()
   message?: string;
 }
+
+export class UpdateUserProfileDto {
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @Matches(/^\+[1-9]\d{7,14}$/, {
+    message: 'phone must be in E.164 format, e.g. +923001234567.',
+  })
+  phone!: string;
+}

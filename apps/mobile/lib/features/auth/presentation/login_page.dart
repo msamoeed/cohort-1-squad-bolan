@@ -60,13 +60,17 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           Text(
                             'HisaabAI',
                             textAlign: TextAlign.center,
-                            style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             'Track receivables. Collect with confidence.',
                             textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                           ),
                           const SizedBox(height: 24),
                           TextFormField(
@@ -77,20 +81,32 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             decoration: InputDecoration(
                               labelText: 'Email address',
                               hintText: 'you@company.com',
-                              prefixIcon: const Icon(Icons.alternate_email_rounded),
+                              prefixIcon: const Icon(
+                                Icons.alternate_email_rounded,
+                              ),
                               filled: true,
                               fillColor: colorScheme.surfaceContainerHighest,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: colorScheme.outlineVariant),
+                                borderSide: BorderSide(
+                                  color: colorScheme.outlineVariant,
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: colorScheme.primary, width: 1.5),
+                                borderSide: BorderSide(
+                                  color: colorScheme.primary,
+                                  width: 1.5,
+                                ),
                               ),
                             ),
-                            validator: (value) => value != null && value.contains('@') ? null : 'Enter a valid email address.',
+                            validator: (value) =>
+                                value != null && value.contains('@')
+                                ? null
+                                : 'Enter a valid email address.',
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
@@ -101,24 +117,42 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             decoration: InputDecoration(
                               labelText: 'Password',
                               hintText: 'Enter your password',
-                              prefixIcon: const Icon(Icons.lock_outline_rounded),
+                              prefixIcon: const Icon(
+                                Icons.lock_outline_rounded,
+                              ),
                               suffixIcon: IconButton(
-                                onPressed: () => setState(() => _passwordVisible = !_passwordVisible),
-                                icon: Icon(_passwordVisible ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+                                onPressed: () => setState(
+                                  () => _passwordVisible = !_passwordVisible,
+                                ),
+                                icon: Icon(
+                                  _passwordVisible
+                                      ? Icons.visibility_off_rounded
+                                      : Icons.visibility_rounded,
+                                ),
                               ),
                               filled: true,
                               fillColor: colorScheme.surfaceContainerHighest,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: colorScheme.outlineVariant),
+                                borderSide: BorderSide(
+                                  color: colorScheme.outlineVariant,
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: colorScheme.primary, width: 1.5),
+                                borderSide: BorderSide(
+                                  color: colorScheme.primary,
+                                  width: 1.5,
+                                ),
                               ),
                             ),
-                            validator: (value) => value != null && value.length >= 6 ? null : 'Password must be at least 6 characters.',
+                            validator: (value) =>
+                                value != null && value.length >= 6
+                                ? null
+                                : 'Password must be at least 6 characters.',
                           ),
                           const SizedBox(height: 24),
                           FilledButton.icon(
@@ -127,14 +161,27 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                 : const Icon(Icons.login_rounded),
-                            label: Text(_submitting ? 'Signing in…' : 'Sign in'),
+                            label: Text(
+                              _submitting ? 'Signing in…' : 'Sign in',
+                            ),
                             style: FilledButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                             ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: _submitting
+                                ? null
+                                : () => context.go('/signup'),
+                            child: const Text('Need an account? Create one'),
                           ),
                         ],
                       ),
@@ -153,7 +200,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _submitting = true);
     try {
-      await ref.read(authRepositoryProvider).signInWithEmail(_emailController.text.trim(), _passwordController.text);
+      await ref
+          .read(authRepositoryProvider)
+          .signInWithEmail(
+            _emailController.text.trim(),
+            _passwordController.text,
+          );
       if (mounted) context.go('/home');
     } on FirebaseAuthException catch (error) {
       if (mounted) {
@@ -162,11 +214,16 @@ class _LoginPageState extends ConsumerState<LoginPage> {
           SnackBar(
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
             backgroundColor: colorScheme.errorContainer,
             content: Row(
               children: [
-                Icon(Icons.error_outline_rounded, color: colorScheme.onErrorContainer),
+                Icon(
+                  Icons.error_outline_rounded,
+                  color: colorScheme.onErrorContainer,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

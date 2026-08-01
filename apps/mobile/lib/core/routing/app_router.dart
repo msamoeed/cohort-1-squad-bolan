@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/auth_providers.dart';
 import '../../features/auth/presentation/login_page.dart';
+import '../../features/auth/presentation/signup_page.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/invoices/presentation/invoice_review_page.dart';
 import '../../features/invoices/presentation/upload_invoice_page.dart';
@@ -18,7 +19,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/login',
     redirect: (context, state) {
-      final isAuthRoute = state.matchedLocation == '/login';
+      final location = state.matchedLocation;
+      final isLoginRoute = location == '/login';
+      final isSignupRoute = location == '/signup';
+      final isAuthRoute = isLoginRoute || isSignupRoute;
       final isLoggedIn = authState.when(
         data: (user) => user != null,
         loading: () => false,
@@ -27,11 +31,14 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       if (authState.isLoading) return null;
       if (!isLoggedIn && !isAuthRoute) return '/login';
-      if (isLoggedIn && isAuthRoute) return '/home';
+      // Keep /signup available after Firebase account creation so the
+      // profile can still be saved before navigating to the dashboard.
+      if (isLoggedIn && isLoginRoute) return '/home';
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
+      GoRoute(path: '/signup', builder: (context, state) => const SignupPage()),
       ShellRoute(
         builder: (context, state, child) => AppScaffold(child: child),
         routes: [

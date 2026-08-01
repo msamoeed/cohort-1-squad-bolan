@@ -77,6 +77,15 @@ export class ReminderDraftResponseDto {
   whatsappUrl!: string;
 }
 
+export class UserProfileResponseDto {
+  uid!: string;
+  email!: string | null;
+  name!: string;
+  phone!: string;
+  createdAt!: string | null;
+  updatedAt!: string | null;
+}
+
 export function toIsoString(value: unknown): string | null {
   if (value == null) return null;
   if (value instanceof Date) return value.toISOString();

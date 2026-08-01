@@ -17,10 +17,12 @@ import { RemindersController } from './reminders/reminders.controller';
 import { RemindersService } from './reminders/reminders.service';
 import { UploadsController } from './uploads/uploads.controller';
 import { UploadsService } from './uploads/uploads.service';
+import { UsersController } from './users/users.controller';
+import { UsersService } from './users/users.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true })],
-  controllers: [AppController, ContactsController, CatalogController, UploadsController, InvoiceExtractionController, ReceivablesController, RemindersController],
-  providers: [FirebaseAdminService, BusinessStoreService, ContactsService, CatalogService, UploadsService, InvoiceExtractionService, ReceivablesService, RemindersService, { provide: APP_GUARD, useClass: FirebaseAuthGuard }],
+  controllers: [AppController, ContactsController, CatalogController, UploadsController, InvoiceExtractionController, ReceivablesController, RemindersController, UsersController],
+  providers: [FirebaseAdminService, BusinessStoreService, ContactsService, CatalogService, UploadsService, InvoiceExtractionService, ReceivablesService, RemindersService, UsersService, { provide: APP_GUARD, useClass: FirebaseAuthGuard }],
 })
 export class AppModule {}
