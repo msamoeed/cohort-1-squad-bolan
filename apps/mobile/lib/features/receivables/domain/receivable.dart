@@ -6,7 +6,6 @@ class Customer {
     required this.balance,
     required this.invoiceCount,
     required this.isOverdue,
-    this.dueDate,
   });
 
   final String id;
@@ -15,5 +14,4 @@ class Customer {
   final double balance;
   final int invoiceCount;
   final bool isOverdue;
-  final DateTime? dueDate;
 }

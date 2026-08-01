@@ -46,7 +46,7 @@ class _UploadInvoicePageState extends ConsumerState<UploadInvoicePage> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Take a clear photo or choose a WhatsApp screenshot.',
+              'Take a clear photo or choose one from your gallery.',
               style: TextStyle(color: AppColors.muted),
             ),
             const SizedBox(height: 30),
@@ -82,7 +82,7 @@ class _UploadInvoicePageState extends ConsumerState<UploadInvoicePage> {
                     ),
                     SizedBox(height: 6),
                     Text(
-                      'Camera, gallery or WhatsApp',
+                      'Camera or gallery',
                       style: TextStyle(color: AppColors.muted),
                     ),
                   ],
@@ -177,7 +177,10 @@ class _UploadInvoicePageState extends ConsumerState<UploadInvoicePage> {
           .createExtraction(uploadId: uploadId);
 
       if (!mounted) return;
-      context.push('/review/${Uri.encodeComponent(extractionId)}');
+      context.push(
+        '/review/${Uri.encodeComponent(extractionId)}',
+        extra: image.path,
+      );
     } on DioException catch (error) {
       _showError(_dioMessage(error));
     } on FormatException catch (error) {

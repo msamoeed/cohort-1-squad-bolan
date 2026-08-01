@@ -53,6 +53,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/review/:extractionId',
         builder: (context, state) => InvoiceReviewPage(
           extractionId: state.pathParameters['extractionId']!,
+          imagePath: state.extra is String ? state.extra! as String : null,
         ),
       ),
       GoRoute(

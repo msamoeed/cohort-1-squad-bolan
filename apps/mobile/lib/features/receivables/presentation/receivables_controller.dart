@@ -9,11 +9,22 @@ import '../domain/contact.dart';
 import '../domain/ledger_entry.dart';
 import '../domain/receivable.dart';
 
-final contactsApiProvider = Provider<ContactsApi>((ref) => ContactsApi(ref.watch(apiClientProvider)));
-final receivablesProvider = AsyncNotifierProvider<ReceivablesController, List<Customer>>(ReceivablesController.new);
+final contactsApiProvider = Provider<ContactsApi>(
+  (ref) => ContactsApi(ref.watch(apiClientProvider)),
+);
+final receivablesProvider =
+    AsyncNotifierProvider<ReceivablesController, List<Customer>>(
+      ReceivablesController.new,
+    );
 
-final ledgerProvider = FutureProvider.family<List<LedgerEntry>, String>((ref, contactId) async {
-  final response = await ref.watch(apiClientProvider).dio.get('/contacts/$contactId/ledger');
+final ledgerProvider = FutureProvider.family<List<LedgerEntry>, String>((
+  ref,
+  contactId,
+) async {
+  final response = await ref
+      .watch(apiClientProvider)
+      .dio
+      .get('/contacts/$contactId/ledger');
   final data = response.data;
   if (data is! List) return const <LedgerEntry>[];
   return data
@@ -41,7 +52,6 @@ Customer _toCustomer(Contact contact) {
     name: contact.name,
     phone: contact.phone,
     balance: contact.currentBalance,
-    dueDate: contact.earliestDueDate,
     invoiceCount: contact.invoiceCount,
     isOverdue: contact.overdue,
   );

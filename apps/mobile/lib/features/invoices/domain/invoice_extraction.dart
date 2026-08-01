@@ -1,21 +1,14 @@
 class InvoiceExtraction {
   const InvoiceExtraction({
-    required this.id,
-    required this.uploadId,
     required this.status,
     this.draft,
     this.failureReason,
-    this.approvedInvoiceId,
   });
 
-  final String id;
-  final String uploadId;
   final String status;
   final InvoiceDraft? draft;
   final String? failureReason;
-  final String? approvedInvoiceId;
 
-  bool get isNeedsReview => status == 'needs_review';
   bool get isApproved => status == 'approved';
   bool get isFailed => status == 'failed';
   bool get isProcessing => status == 'processing';
@@ -23,14 +16,11 @@ class InvoiceExtraction {
   factory InvoiceExtraction.fromJson(Map<String, dynamic> json) {
     final draftJson = json['draft'];
     return InvoiceExtraction(
-      id: json['id']?.toString() ?? '',
-      uploadId: json['uploadId']?.toString() ?? '',
       status: json['status']?.toString() ?? '',
       draft: draftJson is Map<String, dynamic>
           ? InvoiceDraft.fromJson(draftJson)
           : null,
       failureReason: json['failureReason']?.toString(),
-      approvedInvoiceId: json['approvedInvoiceId']?.toString(),
     );
   }
 }
@@ -86,10 +76,9 @@ class InvoiceDraftItem {
   final String? confidence;
   final bool crossedOut;
 
-  String get displayName =>
-      normalizedProduct?.trim().isNotEmpty == true
-          ? normalizedProduct!.trim()
-          : (ocrText?.trim() ?? '');
+  String get displayName => normalizedProduct?.trim().isNotEmpty == true
+      ? normalizedProduct!.trim()
+      : (ocrText?.trim() ?? '');
 
   factory InvoiceDraftItem.fromJson(Map<String, dynamic> json) {
     return InvoiceDraftItem(
