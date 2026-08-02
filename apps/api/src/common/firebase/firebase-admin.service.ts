@@ -1,14 +1,13 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { Auth, DecodedIdToken, getAuth } from 'firebase-admin/auth';
 import { Firestore, getFirestore } from 'firebase-admin/firestore';
-import {
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
-import { Readable } from 'stream';
 
 type StorageBucketAdapter = {
   bucket: () => {
@@ -26,10 +25,28 @@ type StorageBucketAdapter = {
   };
 };
 
+type B2Auth = {
+  accountId: string;
+  apiUrl: string;
+  authorizationToken: string;
+  downloadUrl: string;
+  expiresAt: number;
+};
+
+type B2UploadUrl = {
+  uploadUrl: string;
+  authorizationToken: string;
+  expiresAt: number;
+};
+
 @Injectable()
 export class FirebaseAdminService {
+  private readonly logger = new Logger(FirebaseAdminService.name);
   private app?: App;
   private storageAdapter?: StorageBucketAdapter;
+  private b2Auth?: B2Auth;
+  private b2BucketId?: string;
+  private b2UploadUrl?: B2UploadUrl;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -56,81 +73,237 @@ export class FirebaseAdminService {
 
   private createBlazeBucketStorage(): StorageBucketAdapter {
     const bucketName = this.required('B2_BUCKET');
-    const endpoint = this.required('B2_ENDPOINT');
-    const region = this.config.get<string>('B2_REGION') ?? 'us-west-004';
-    const accessKeyId = this.required('B2_KEY_ID');
-    const secretAccessKey = this.required('B2_APPLICATION_KEY');
-
-    // B2's S3 API rejects AWS SDK v3 default flexible checksums
-    // ("IncompleteBody: The request body was too small").
-    const s3 = new S3Client({
-      region,
-      endpoint,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-      forcePathStyle: true,
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-      responseChecksumValidation: 'WHEN_REQUIRED',
-    });
 
     return {
       bucket: () => ({
         file: (key: string) => ({
-          async save(bytes: Buffer, options?: {
-            contentType?: string;
-            resumable?: boolean;
-            metadata?: Record<string, string>;
-          }) {
+          save: async (
+            bytes: Buffer,
+            options?: {
+              contentType?: string;
+              resumable?: boolean;
+              metadata?: Record<string, string>;
+            },
+          ) => {
             const body = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
-            const params: {
-              Bucket: string;
-              Key: string;
-              Body: Buffer;
-              ContentLength: number;
-              ContentType?: string;
-              CacheControl?: string;
-              Metadata?: Record<string, string>;
-            } = {
-              Bucket: bucketName,
-              Key: key,
-              Body: body,
-              ContentLength: body.length,
-              ContentType: options?.contentType,
-            };
-
-            if (options?.metadata) {
-              const { cacheControl, ...metadata } = options.metadata;
-              if (Object.keys(metadata).length > 0) {
-                params.Metadata = metadata;
-              }
-              if (cacheControl) {
-                params.CacheControl = cacheControl;
-              }
-            }
-
-            await s3.send(new PutObjectCommand(params));
-          },
-          async download() {
-            const res = await s3.send(
-              new GetObjectCommand({
-                Bucket: bucketName,
-                Key: key,
-              }),
+            await this.uploadToB2(
+              bucketName,
+              key,
+              body,
+              options?.contentType ?? 'application/octet-stream',
             );
-            const body = res.Body as unknown;
-            let buffer: Buffer;
-            if (body instanceof Uint8Array) buffer = Buffer.from(body);
-            else if (body instanceof Readable)
-              buffer = await streamToBuffer(body);
-            else if (typeof body === 'string') buffer = Buffer.from(body);
-            else buffer = Buffer.from([]);
+          },
+          download: async () => {
+            const buffer = await this.downloadFromB2(bucketName, key);
             return [buffer];
           },
         }),
       }),
     };
+  }
+
+  private async uploadToB2(
+    bucketName: string,
+    fileName: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `B2 upload started bucket=${bucketName} fileName=${fileName} sizeBytes=${body.length} contentType=${contentType}`,
+    );
+    const upload = await this.getB2UploadUrl(bucketName);
+    const sha1 = createHash('sha1').update(body).digest('hex');
+    const requestBody = Uint8Array.from(body);
+    const response = await fetch(upload.uploadUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: upload.authorizationToken,
+        'X-Bz-File-Name': encodeB2FileName(fileName),
+        'Content-Type': contentType,
+        'Content-Length': String(requestBody.byteLength),
+        'X-Bz-Content-Sha1': sha1,
+      },
+      body: requestBody,
+    });
+
+    if (!response.ok) {
+      // Upload URLs can expire; retry once with a fresh URL.
+      if (response.status === 401 || response.status === 503) {
+        this.logger.warn(
+          `B2 upload auth/url stale; retrying fileName=${fileName} status=${response.status}`,
+        );
+        this.b2UploadUrl = undefined;
+        const retryUpload = await this.getB2UploadUrl(bucketName);
+        const retry = await fetch(retryUpload.uploadUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: retryUpload.authorizationToken,
+            'X-Bz-File-Name': encodeB2FileName(fileName),
+            'Content-Type': contentType,
+            'Content-Length': String(requestBody.byteLength),
+            'X-Bz-Content-Sha1': sha1,
+          },
+          body: requestBody,
+        });
+        if (!retry.ok) {
+          const detail = await retry.text();
+          this.logger.error(
+            `B2 upload retry failed fileName=${fileName} status=${retry.status} detail=${detail.slice(0, 300)}`,
+          );
+          throw new Error(
+            `BlazeBucket upload failed (${retry.status}): ${detail}`,
+          );
+        }
+        this.logger.log(
+          `B2 upload completed after retry fileName=${fileName} durationMs=${Date.now() - startedAt}`,
+        );
+        return;
+      }
+      const detail = await response.text();
+      this.logger.error(
+        `B2 upload failed fileName=${fileName} status=${response.status} detail=${detail.slice(0, 300)}`,
+      );
+      throw new Error(
+        `BlazeBucket upload failed (${response.status}): ${detail}`,
+      );
+    }
+    this.logger.log(
+      `B2 upload completed fileName=${fileName} durationMs=${Date.now() - startedAt}`,
+    );
+  }
+
+  private async downloadFromB2(
+    bucketName: string,
+    fileName: string,
+  ): Promise<Buffer> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `B2 download started bucket=${bucketName} fileName=${fileName}`,
+    );
+    const auth = await this.getB2Auth();
+    const url = `${auth.downloadUrl}/file/${encodeURIComponent(bucketName)}/${fileName
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: auth.authorizationToken,
+      },
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      this.logger.error(
+        `B2 download failed fileName=${fileName} status=${response.status} detail=${detail.slice(0, 300)}`,
+      );
+      throw new Error(
+        `BlazeBucket download failed (${response.status}): ${detail}`,
+      );
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    this.logger.log(
+      `B2 download completed fileName=${fileName} sizeBytes=${buffer.length} durationMs=${Date.now() - startedAt}`,
+    );
+    return buffer;
+  }
+
+  private async getB2UploadUrl(bucketName: string): Promise<B2UploadUrl> {
+    if (this.b2UploadUrl && this.b2UploadUrl.expiresAt > Date.now()) {
+      return this.b2UploadUrl;
+    }
+
+    const auth = await this.getB2Auth();
+    const bucketId = await this.getB2BucketId(auth, bucketName);
+    const response = await fetch(`${auth.apiUrl}/b2api/v2/b2_get_upload_url`, {
+      method: 'POST',
+      headers: {
+        Authorization: auth.authorizationToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ bucketId }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `BlazeBucket get_upload_url failed (${response.status}): ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as {
+      uploadUrl: string;
+      authorizationToken: string;
+    };
+    this.b2UploadUrl = {
+      uploadUrl: data.uploadUrl,
+      authorizationToken: data.authorizationToken,
+      expiresAt: Date.now() + 20 * 60 * 1000,
+    };
+    return this.b2UploadUrl;
+  }
+
+  private async getB2BucketId(auth: B2Auth, bucketName: string): Promise<string> {
+    if (this.b2BucketId) return this.b2BucketId;
+
+    const response = await fetch(`${auth.apiUrl}/b2api/v2/b2_list_buckets`, {
+      method: 'POST',
+      headers: {
+        Authorization: auth.authorizationToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        accountId: auth.accountId,
+        bucketName,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `BlazeBucket list_buckets failed (${response.status}): ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as {
+      buckets?: Array<{ bucketId: string; bucketName: string }>;
+    };
+    const bucket = data.buckets?.find((item) => item.bucketName === bucketName);
+    if (!bucket) {
+      throw new Error(`BlazeBucket bucket "${bucketName}" was not found.`);
+    }
+    this.b2BucketId = bucket.bucketId;
+    return this.b2BucketId;
+  }
+
+  private async getB2Auth(): Promise<B2Auth> {
+    if (this.b2Auth && this.b2Auth.expiresAt > Date.now()) {
+      return this.b2Auth;
+    }
+
+    const keyId = this.required('B2_KEY_ID');
+    const applicationKey = this.required('B2_APPLICATION_KEY');
+    const basic = Buffer.from(`${keyId}:${applicationKey}`).toString('base64');
+    const response = await fetch(
+      'https://api.backblazeb2.com/b2api/v2/b2_authorize_account',
+      {
+        headers: {
+          Authorization: `Basic ${basic}`,
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `BlazeBucket authorize failed (${response.status}): ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as {
+      accountId: string;
+      apiUrl: string;
+      authorizationToken: string;
+      downloadUrl: string;
+    };
+    this.b2Auth = {
+      accountId: data.accountId,
+      apiUrl: data.apiUrl,
+      authorizationToken: data.authorizationToken,
+      downloadUrl: data.downloadUrl,
+      expiresAt: Date.now() + 20 * 60 * 1000,
+    };
+    return this.b2Auth;
   }
 
   private get auth(): Auth {
@@ -166,13 +339,9 @@ export class FirebaseAdminService {
   }
 }
 
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    stream.on('data', (chunk) =>
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk),
-    );
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
+function encodeB2FileName(fileName: string): string {
+  return fileName
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
 }

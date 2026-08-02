@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -21,6 +22,8 @@ type GeminiResponse = {
 
 @Injectable()
 export class InvoiceExtractionService {
+  private readonly logger = new Logger(InvoiceExtractionService.name);
+
   constructor(
     private readonly store: BusinessStoreService,
     private readonly firebase: FirebaseAdminService,
@@ -31,11 +34,22 @@ export class InvoiceExtractionService {
     businessId: string,
     dto: CreateExtractionDto,
   ): Promise<InvoiceExtractionResponseDto> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `Extraction started businessId=${businessId} uploadId=${dto.uploadId}`,
+    );
+
     const upload = await this.store
       .collection(businessId, 'uploads')
       .doc(dto.uploadId)
       .get();
-    if (!upload.exists) throw new NotFoundException('Upload not found.');
+    if (!upload.exists) {
+      this.logger.warn(
+        `Extraction aborted; upload missing businessId=${businessId} uploadId=${dto.uploadId}`,
+      );
+      throw new NotFoundException('Upload not found.');
+    }
+
     const ref = this.store.collection(businessId, 'invoiceExtractions').doc();
     await ref.set({
       uploadId: dto.uploadId,
@@ -44,23 +58,36 @@ export class InvoiceExtractionService {
       promptVersion: 'invoice-v1',
       createdAt: FieldValue.serverTimestamp(),
     });
+    this.logger.log(
+      `Extraction record created businessId=${businessId} extractionId=${ref.id} model=${this.model}`,
+    );
+
     try {
       const draft = await this.extract(
         upload.data()! as { path: string; contentType: string },
+        ref.id,
       );
       await ref.update({
         status: 'needs_review',
         draft,
         completedAt: FieldValue.serverTimestamp(),
       });
+      this.logger.log(
+        `Extraction completed businessId=${businessId} extractionId=${ref.id} status=needs_review items=${countDraftItems(draft)} durationMs=${Date.now() - startedAt}`,
+      );
       return this.get(businessId, ref.id);
     } catch (error) {
+      const failureReason =
+        error instanceof Error ? error.message : 'Unknown extraction error';
       await ref.update({
         status: 'failed',
-        failureReason:
-          error instanceof Error ? error.message : 'Unknown extraction error',
+        failureReason,
         completedAt: FieldValue.serverTimestamp(),
       });
+      this.logger.error(
+        `Extraction failed businessId=${businessId} extractionId=${ref.id} reason=${failureReason} durationMs=${Date.now() - startedAt}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       throw error;
     }
   }
@@ -69,6 +96,9 @@ export class InvoiceExtractionService {
     businessId: string,
     id: string,
   ): Promise<InvoiceExtractionResponseDto> {
+    this.logger.debug(
+      `Fetching extraction businessId=${businessId} extractionId=${id}`,
+    );
     const snapshot = await this.store
       .collection(businessId, 'invoiceExtractions')
       .doc(id)
@@ -95,22 +125,38 @@ export class InvoiceExtractionService {
   }
 
   private get model(): string {
-    return this.config.get<string>('GEMINI_MODEL') ?? 'gemini-2.5-flash';
+    return this.config.get<string>('GEMINI_MODEL') ?? 'gemini-3.6-flash';
   }
 
-  private async extract(upload: {
-    path: string;
-    contentType: string;
-  }): Promise<unknown> {
-    const apiKey = this.config.get<string>('GEMINI_API_KEY');
+  private async extract(
+    upload: {
+      path: string;
+      contentType: string;
+    },
+    extractionId: string,
+  ): Promise<unknown> {
+    const apiKey = this.config.get<string>('GEMINI_API_KEY')?.trim();
     if (!apiKey)
       throw new ServiceUnavailableException(
-        'Invoice extraction is not configured.',
+        'Invoice extraction is not configured. Set GEMINI_API_KEY in apps/api/.env.',
       );
+
+    this.logger.log(
+      `Downloading invoice image for OCR extractionId=${extractionId} path=${upload.path} contentType=${upload.contentType}`,
+    );
+    const downloadStartedAt = Date.now();
     const [bytes] = await this.firebase.storage
       .bucket()
       .file(upload.path)
       .download();
+    this.logger.log(
+      `Image downloaded for OCR extractionId=${extractionId} sizeBytes=${bytes.length} durationMs=${Date.now() - downloadStartedAt}`,
+    );
+
+    this.logger.log(
+      `Calling Gemini OCR extractionId=${extractionId} model=${this.model}`,
+    );
+    const geminiStartedAt = Date.now();
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${apiKey}`,
       {
@@ -144,23 +190,53 @@ export class InvoiceExtractionService {
         }),
       },
     );
-    if (!response.ok)
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      this.logger.error(
+        `Gemini OCR HTTP failure extractionId=${extractionId} status=${response.status} body=${errorBody.slice(0, 300)}`,
+      );
       throw new ServiceUnavailableException(
         `Gemini extraction failed (${response.status}).`,
       );
+    }
+
     const payload = (await response.json()) as GeminiResponse;
     const text =
       payload.candidates?.[0]?.content?.parts
         ?.map((part) => part.text ?? '')
         .join('') ?? '';
-    if (!text)
+    if (!text) {
+      this.logger.warn(
+        `Gemini returned empty text extractionId=${extractionId} durationMs=${Date.now() - geminiStartedAt}`,
+      );
       throw new BadRequestException('Gemini returned an empty extraction.');
+    }
+
     try {
-      return JSON.parse(text) as unknown;
+      const draft = JSON.parse(text) as unknown;
+      this.logger.log(
+        `Gemini OCR parsed extractionId=${extractionId} items=${countDraftItems(draft)} durationMs=${Date.now() - geminiStartedAt}`,
+      );
+      return draft;
     } catch {
+      this.logger.warn(
+        `Gemini returned invalid JSON extractionId=${extractionId} preview=${text.slice(0, 200)}`,
+      );
       throw new BadRequestException('Gemini returned invalid structured data.');
     }
   }
+}
+
+function countDraftItems(draft: unknown): number {
+  if (
+    draft &&
+    typeof draft === 'object' &&
+    Array.isArray((draft as { items?: unknown }).items)
+  ) {
+    return ((draft as { items: unknown[] }).items).length;
+  }
+  return 0;
 }
 
 const invoiceSchema = {

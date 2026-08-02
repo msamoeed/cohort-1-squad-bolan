@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -20,6 +21,8 @@ import {
 
 @Injectable()
 export class ReceivablesService {
+  private readonly logger = new Logger(ReceivablesService.name);
+
   constructor(private readonly store: BusinessStoreService) {}
 
   async approveInvoice(
@@ -27,6 +30,11 @@ export class ReceivablesService {
     actorId: string,
     dto: ApproveInvoiceDto,
   ): Promise<InvoiceApprovalResponseDto> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `Invoice approval started businessId=${businessId} extractionId=${dto.extractionId} contactId=${dto.contactId} total=${dto.total} items=${dto.items.length}`,
+    );
+
     const db = this.store.collection(businessId, 'invoices').firestore;
     const extractionRef = this.store
       .collection(businessId, 'invoiceExtractions')
@@ -38,42 +46,54 @@ export class ReceivablesService {
     const entryRef = this.store
       .collection(businessId, 'receivableEntries')
       .doc();
-    await db.runTransaction(async (transaction) => {
-      const [extraction, contact] = await Promise.all([
-        transaction.get(extractionRef),
-        transaction.get(contactRef),
-      ]);
-      if (!extraction.exists)
-        throw new NotFoundException('Extraction not found.');
-      if (extraction.data()!.status !== 'needs_review')
-        throw new ConflictException(
-          'Only a draft awaiting review can be approved.',
-        );
-      if (!contact.exists) throw new NotFoundException('Contact not found.');
-      transaction.set(invoiceRef, {
-        ...dto,
-        status: 'approved',
-        approvedBy: actorId,
-        approvedAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
+    try {
+      await db.runTransaction(async (transaction) => {
+        const [extraction, contact] = await Promise.all([
+          transaction.get(extractionRef),
+          transaction.get(contactRef),
+        ]);
+        if (!extraction.exists)
+          throw new NotFoundException('Extraction not found.');
+        if (extraction.data()!.status !== 'needs_review')
+          throw new ConflictException(
+            'Only a draft awaiting review can be approved.',
+          );
+        if (!contact.exists) throw new NotFoundException('Contact not found.');
+        transaction.set(invoiceRef, {
+          ...dto,
+          status: 'approved',
+          approvedBy: actorId,
+          approvedAt: FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(entryRef, {
+          type: 'invoice',
+          invoiceId: invoiceRef.id,
+          contactId: dto.contactId,
+          signedAmount: dto.total,
+          occurredAt: dto.invoiceDate,
+          dueDate: dto.dueDate ?? null,
+          createdBy: actorId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.update(extractionRef, {
+          status: 'approved',
+          approvedInvoiceId: invoiceRef.id,
+          approvedAt: FieldValue.serverTimestamp(),
+        });
       });
-      transaction.set(entryRef, {
-        type: 'invoice',
-        invoiceId: invoiceRef.id,
-        contactId: dto.contactId,
-        signedAmount: dto.total,
-        occurredAt: dto.invoiceDate,
-        dueDate: dto.dueDate ?? null,
-        createdBy: actorId,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      transaction.update(extractionRef, {
-        status: 'approved',
-        approvedInvoiceId: invoiceRef.id,
-        approvedAt: FieldValue.serverTimestamp(),
-      });
-    });
+    } catch (error) {
+      this.logger.error(
+        `Invoice approval failed businessId=${businessId} extractionId=${dto.extractionId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
+    }
+
     await this.audit(businessId, actorId, 'invoice.approved', invoiceRef.id);
+    this.logger.log(
+      `Invoice approval completed businessId=${businessId} invoiceId=${invoiceRef.id} extractionId=${dto.extractionId} durationMs=${Date.now() - startedAt}`,
+    );
     return { id: invoiceRef.id, status: 'approved' };
   }
 
