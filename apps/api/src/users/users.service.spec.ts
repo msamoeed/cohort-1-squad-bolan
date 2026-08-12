@@ -34,7 +34,9 @@ describe('UsersService', () => {
   });
 
   it('creates a profile document on first upsert', async () => {
-    const set = jest.fn().mockResolvedValue(undefined);
+    const set = jest
+      .fn<Promise<void>, [WrittenProfile]>()
+      .mockResolvedValue(undefined);
     const get = jest
       .fn()
       .mockResolvedValueOnce({ exists: false })
@@ -47,7 +49,7 @@ describe('UsersService', () => {
           updatedAt: '2026-07-01T00:00:00.000Z',
         }),
       });
-    const update = jest.fn();
+    const update = jest.fn<Promise<void>, [WrittenProfile]>();
     const service = new UsersService(
       mockFirebase({ exists: false, set, get, update }),
     );
@@ -75,8 +77,10 @@ describe('UsersService', () => {
   });
 
   it('updates an existing profile without overwriting createdAt', async () => {
-    const update = jest.fn().mockResolvedValue(undefined);
-    const set = jest.fn();
+    const update = jest
+      .fn<Promise<void>, [WrittenProfile]>()
+      .mockResolvedValue(undefined);
+    const set = jest.fn<Promise<void>, [WrittenProfile]>();
     const get = jest
       .fn()
       .mockResolvedValueOnce({ exists: true })
@@ -114,6 +118,9 @@ describe('UsersService', () => {
     expect(update.mock.calls[0][0]).toHaveProperty('updatedAt');
   });
 });
+
+/** Shape of a profile document handed to Firestore set()/update(). */
+type WrittenProfile = Record<string, unknown>;
 
 function mockFirebase(options: {
   exists: boolean;

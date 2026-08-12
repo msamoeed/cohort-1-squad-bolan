@@ -89,7 +89,7 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
   void _seedFromExtraction(InvoiceExtraction extraction) {
     final draft = extraction.draft!;
     _invoiceNumberController.text = draft.invoiceNumber ?? '';
-    _totalController.text = _numOrEmpty(draft.total);
+    _totalController.text = _formatNumber(draft.total, _moneyDecimals);
     _invoiceDate = _tryParseDate(draft.invoiceDate) ?? DateTime.now();
     _dueDate = _tryParseDate(draft.dueDate);
     _draftCustomerName = draft.customerName;
@@ -168,7 +168,9 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
           else
             const SizedBox(height: 8),
           contactsAsync.when(
-            data: (contacts) => DropdownButtonFormField<String>(
+            data: (contacts) => contacts.isEmpty
+                ? _buildNoContacts()
+                : DropdownButtonFormField<String>(
               initialValue: _selectedContactId,
               decoration: const InputDecoration(labelText: 'Select customer'),
               items: [
@@ -253,9 +255,11 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
             ),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             validator: (value) {
-              final parsed = double.tryParse((value ?? '').trim());
+              final parsed = _parseMoney(value);
               if (parsed == null || parsed <= 0) {
-                return 'Enter a valid invoice total.';
+                return _decimalPlacesOf(value) > _moneyDecimals
+                    ? 'Use at most $_moneyDecimals decimal places.'
+                    : 'Enter a valid invoice total.';
               }
               return null;
             },
@@ -297,6 +301,38 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
                     ),
                   )
                 : const Text('Approve invoice & create receivable'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// With no contacts the dropdown renders empty and the invoice can never be
+  /// approved, so offer the way out instead of a dead control.
+  Widget _buildNoContacts() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFDF3E7),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'You have no customers yet. Add the shop this invoice belongs to, '
+            'then come back to approve it.',
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: () => context.push('/customers/new'),
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            label: Text(
+              _draftCustomerName != null &&
+                      _draftCustomerName!.trim().isNotEmpty
+                  ? 'Add "${_draftCustomerName!.trim()}"'
+                  : 'Add customer',
+            ),
           ),
         ],
       ),
@@ -392,7 +428,7 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    validator: _positiveNumberValidator,
+                    validator: _quantityValidator,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -403,7 +439,7 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    validator: _nonNegativeNumberValidator,
+                    validator: _moneyValidator,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -414,7 +450,7 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    validator: _nonNegativeNumberValidator,
+                    validator: _moneyValidator,
                   ),
                 ),
               ],
@@ -634,28 +670,36 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
       errors.add('Add at least one invoice item.');
     }
 
-    final total = double.tryParse(_totalController.text.trim());
+    final total = _parseMoney(_totalController.text);
+    if (total == null || total <= 0) {
+      errors.add(
+        'Enter a valid invoice total using at most $_moneyDecimals decimal places.',
+      );
+    }
 
     final approvalItems = <InvoiceApprovalItem>[];
     var itemsSum = 0.0;
     for (final item in _items) {
       final name = item.nameController.text.trim();
-      final quantity = double.tryParse(item.quantityController.text.trim());
-      final unitPrice = double.tryParse(item.unitPriceController.text.trim());
-      final lineTotal = double.tryParse(item.lineTotalController.text.trim());
+      // These parsers enforce the API's precision limits, so an OCR value like
+      // 77.451 is caught here instead of coming back as a 400.
+      final quantity = _parseQuantity(item.quantityController.text);
+      final unitPrice = _parseMoney(item.unitPriceController.text);
+      final lineTotal = _parseMoney(item.lineTotalController.text);
 
       final isValid =
           name.isNotEmpty &&
           quantity != null &&
-          quantity > 0 &&
           unitPrice != null &&
-          unitPrice >= 0 &&
-          lineTotal != null &&
-          lineTotal >= 0;
+          lineTotal != null;
 
       if (!isValid) {
+        final label = name.isEmpty ? 'unnamed item' : name;
         errors.add(
-          'Fix the invalid values for "${name.isEmpty ? 'unnamed item' : name}".',
+          _hasTooManyDecimals(item)
+              ? 'Round the amounts for "$label" to at most $_moneyDecimals decimal places '
+                    '(quantity allows $_quantityDecimals).'
+              : 'Fix the invalid values for "$label".',
         );
         continue;
       }
@@ -680,7 +724,14 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
     }
 
     if (!formValid || errors.isNotEmpty) {
-      setState(() => _validationErrors = errors);
+      // A failing field validator with no matching entry in `errors` (an empty
+      // invoice total, say) used to clear the summary and show nothing at all,
+      // so the button looked dead. Always leave the shopkeeper with a reason.
+      setState(() {
+        _validationErrors = errors.isEmpty
+            ? const ['Fix the highlighted fields before approving.']
+            : errors;
+      });
       return;
     }
 
@@ -720,13 +771,7 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
     } on DioException catch (error) {
       _handleApprovalError(error);
     } catch (_) {
-      if (mounted) {
-        setState(
-          () => _validationErrors = const [
-            'Unable to approve the invoice. Please try again.',
-          ],
-        );
-      }
+      _showApprovalError('Unable to approve the invoice. Please try again.');
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -737,7 +782,13 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
     final data = error.response?.data;
     String message;
 
-    if (data is Map<String, dynamic> && data['message'] != null) {
+    if (status != null && status >= 500) {
+      // Nest reports every unhandled failure as a bare "Internal server
+      // error", which tells the shopkeeper nothing. Say where to look instead.
+      message =
+          'The server could not save this invoice (error $status). '
+          'Your edits are still here — try again, and check the API logs if it keeps failing.';
+    } else if (data is Map<String, dynamic> && data['message'] != null) {
       final raw = data['message'];
       message = raw is List ? raw.join('\n') : raw.toString();
     } else if (status == 404) {
@@ -753,7 +804,21 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
       message = 'Unable to approve the invoice. Please try again.';
     }
 
-    if (mounted) setState(() => _validationErrors = [message]);
+    _showApprovalError(message);
+  }
+
+  /// Surfaces a submission failure twice: in the summary box above the button
+  /// and as a snack bar, because the box sits mid-list and is easy to miss.
+  void _showApprovalError(String message) {
+    if (!mounted) return;
+    setState(() => _validationErrors = [message]);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: AppColors.danger,
+        content: Text(message),
+      ),
+    );
   }
 
   bool _isNetworkError(DioExceptionType type) {
@@ -793,23 +858,65 @@ class _InvoiceReviewPageState extends ConsumerState<InvoiceReviewPage> {
     return DateTime.tryParse(value.trim());
   }
 
-  String _numOrEmpty(double? value) {
-    if (value == null) return '';
-    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
-    return value.toString();
+  bool _hasTooManyDecimals(_ItemEditor item) {
+    return _decimalPlacesOf(item.quantityController.text) > _quantityDecimals ||
+        _decimalPlacesOf(item.unitPriceController.text) > _moneyDecimals ||
+        _decimalPlacesOf(item.lineTotalController.text) > _moneyDecimals;
   }
 
-  String? _positiveNumberValidator(String? value) {
-    final parsed = double.tryParse((value ?? '').trim());
-    if (parsed == null || parsed <= 0) return 'Invalid';
-    return null;
+  String? _quantityValidator(String? value) {
+    if (_parseQuantity(value) != null) return null;
+    return _decimalPlacesOf(value) > _quantityDecimals
+        ? 'Max $_quantityDecimals dp'
+        : 'Invalid';
   }
 
-  String? _nonNegativeNumberValidator(String? value) {
-    final parsed = double.tryParse((value ?? '').trim());
-    if (parsed == null || parsed < 0) return 'Invalid';
-    return null;
+  String? _moneyValidator(String? value) {
+    if (_parseMoney(value) != null) return null;
+    return _decimalPlacesOf(value) > _moneyDecimals
+        ? 'Max $_moneyDecimals dp'
+        : 'Invalid';
   }
+}
+
+// The API caps money at 2 decimal places and quantities at 3 (InvoiceItemDto
+// in apps/api/src/common/dto/api.dto.ts). Gemini regularly returns unit prices
+// like 77.451, so the form works in the same precision the API accepts —
+// otherwise every OCR'd invoice round-trips into a 400.
+const _moneyDecimals = 2;
+const _quantityDecimals = 3;
+
+/// Rounds to [decimals] and drops trailing zeros: 77.451 -> "77.45", 28 -> "28".
+String _formatNumber(double? value, int decimals) {
+  if (value == null) return '';
+  var text = value.toStringAsFixed(decimals);
+  if (text.contains('.')) {
+    text = text.replaceFirst(RegExp(r'0+$'), '');
+    text = text.replaceFirst(RegExp(r'\.$'), '');
+  }
+  return text;
+}
+
+int _decimalPlacesOf(String? value) {
+  final text = (value ?? '').trim();
+  final dot = text.indexOf('.');
+  return dot < 0 ? 0 : text.length - dot - 1;
+}
+
+/// Non-negative and within the API's money precision, else null.
+double? _parseMoney(String? value) {
+  final text = (value ?? '').trim();
+  final parsed = double.tryParse(text);
+  if (parsed == null || parsed < 0) return null;
+  return _decimalPlacesOf(text) > _moneyDecimals ? null : parsed;
+}
+
+/// Positive and within the API's quantity precision, else null.
+double? _parseQuantity(String? value) {
+  final text = (value ?? '').trim();
+  final parsed = double.tryParse(text);
+  if (parsed == null || parsed <= 0) return null;
+  return _decimalPlacesOf(text) > _quantityDecimals ? null : parsed;
 }
 
 class _InvoiceImageError extends StatelessWidget {
@@ -844,14 +951,16 @@ class _ItemEditor {
     this.crossedOut = false,
     this.ocrText,
   }) : nameController = TextEditingController(text: name ?? ''),
+       // Seeded at the precision the API accepts, so what the shopkeeper
+       // reviews on screen is exactly what gets posted.
        quantityController = TextEditingController(
-         text: _formatOrEmpty(quantity),
+         text: _formatNumber(quantity, _quantityDecimals),
        ),
        unitPriceController = TextEditingController(
-         text: _formatOrEmpty(unitPrice),
+         text: _formatNumber(unitPrice, _moneyDecimals),
        ),
        lineTotalController = TextEditingController(
-         text: _formatOrEmpty(lineTotal),
+         text: _formatNumber(lineTotal, _moneyDecimals),
        );
 
   final TextEditingController nameController;
@@ -867,12 +976,6 @@ class _ItemEditor {
     quantityController.dispose();
     unitPriceController.dispose();
     lineTotalController.dispose();
-  }
-
-  static String _formatOrEmpty(double? value) {
-    if (value == null) return '';
-    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
-    return value.toString();
   }
 }
 

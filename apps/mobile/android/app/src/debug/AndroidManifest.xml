@@ -4,4 +4,9 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Debug only: the API runs over plain HTTP during local development
+         (http://localhost:3000/v1 via `adb reverse`, or a LAN address).
+         Android blocks cleartext by default from targetSdk 28 onward. Release
+         builds do not merge this manifest, so they stay HTTPS-only. -->
+    <application android:usesCleartextTraffic="true"/>
 </manifest>

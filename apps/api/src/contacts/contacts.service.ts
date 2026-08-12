@@ -23,8 +23,12 @@ export class ContactsService {
     dto: CreateContactDto,
   ): Promise<IdResponseDto> {
     const ref = this.store.collection(businessId, 'contacts').doc();
+    // Explicit fields only: spreading the DTO writes `undefined` for an
+    // omitted email, which Firestore rejects.
     await ref.set({
-      ...dto,
+      name: dto.name.trim(),
+      phone: dto.phone.trim(),
+      email: dto.email?.trim() || null,
       whatsappOptIn: dto.whatsappOptIn ?? false,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),

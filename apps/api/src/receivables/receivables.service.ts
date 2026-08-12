@@ -59,8 +59,23 @@ export class ReceivablesService {
             'Only a draft awaiting review can be approved.',
           );
         if (!contact.exists) throw new NotFoundException('Contact not found.');
+        // Map every field explicitly. Spreading the DTO would leak two things
+        // Firestore rejects: `undefined` for omitted optional fields (ES2023
+        // class fields are always defined) and the InvoiceItemDto prototype on
+        // each item (ValidationPipe transform builds class instances).
         transaction.set(invoiceRef, {
-          ...dto,
+          extractionId: dto.extractionId,
+          contactId: dto.contactId,
+          invoiceNumber: dto.invoiceNumber ?? null,
+          invoiceDate: dto.invoiceDate,
+          dueDate: dto.dueDate ?? null,
+          total: dto.total,
+          items: dto.items.map((item) => ({
+            name: item.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            lineTotal: item.lineTotal,
+          })),
           status: 'approved',
           approvedBy: actorId,
           approvedAt: FieldValue.serverTimestamp(),

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
@@ -43,6 +39,7 @@ type B2UploadUrl = {
 export class FirebaseAdminService {
   private readonly logger = new Logger(FirebaseAdminService.name);
   private app?: App;
+  private db?: Firestore;
   private storageAdapter?: StorageBucketAdapter;
   private b2Auth?: B2Auth;
   private b2BucketId?: string;
@@ -61,7 +58,16 @@ export class FirebaseAdminService {
   }
 
   get firestore(): Firestore {
-    return getFirestore(this.firebaseApp);
+    if (!this.db) {
+      const db = getFirestore(this.firebaseApp);
+      // Safety net behind the explicit field mapping in each service: an
+      // optional DTO field that was never sent is `undefined`, not absent,
+      // and Firestore throws on undefined values by default. settings() must
+      // run once, before the client issues any request.
+      db.settings({ ignoreUndefinedProperties: true });
+      this.db = db;
+    }
+    return this.db;
   }
 
   get storage(): StorageBucketAdapter {
@@ -239,7 +245,10 @@ export class FirebaseAdminService {
     return this.b2UploadUrl;
   }
 
-  private async getB2BucketId(auth: B2Auth, bucketName: string): Promise<string> {
+  private async getB2BucketId(
+    auth: B2Auth,
+    bucketName: string,
+  ): Promise<string> {
     if (this.b2BucketId) return this.b2BucketId;
 
     const response = await fetch(`${auth.apiUrl}/b2api/v2/b2_list_buckets`, {

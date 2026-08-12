@@ -8,6 +8,7 @@ import '../../features/auth/presentation/signup_page.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/invoices/presentation/invoice_review_page.dart';
 import '../../features/invoices/presentation/upload_invoice_page.dart';
+import '../../features/receivables/presentation/add_customer_page.dart';
 import '../../features/receivables/presentation/customer_detail_page.dart';
 import '../../features/receivables/presentation/record_payment_page.dart';
 import '../../features/receivables/presentation/receivables_page.dart';
@@ -62,6 +63,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           extractionId: state.pathParameters['extractionId']!,
           imagePath: state.extra is String ? state.extra! as String : null,
         ),
+      ),
+      GoRoute(
+        path: '/customers/new',
+        builder: (context, state) => const AddCustomerPage(),
       ),
       GoRoute(
         path: '/customer/:id',
